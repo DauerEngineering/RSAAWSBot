@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This template deploys a VPC, with a pair of public and private subnets spread
+  across two Availability Zones. It deploys an Internet Gateway, with a default
+  route on the public subnets. It deploys a pair of NAT Gateways (one in each
+  AZ), and default routes for them in the private subnets.
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  myVpcID:
+    Description: Please enter the ID VPC to be used
+    Type: String
+    Default: vpc-02be3f78
+  myKeyPair:
+    Description: Amazon EC2 Key Pair
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: TestKeyPair
+Resources:
+  PrivateSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupName: PrivateSG
+      GroupDescription: Security group with ports only for S3
+      VpcId: !Ref myVpcID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: e8507f12-438d-43f2-8944-58e250cea414
+  PublicSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Allow http to client host
+      VpcId: !Ref myVpcID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 53fa9ab1-e153-4b9b-8d6e-9226bb74a30d
+  S3:
+    Type: 'AWS::S3::Bucket'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 114d54e4-f941-4607-8c5a-a65fdb9ed4af
+  ComprehendSentimentAnalysis:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: aws-ml-blog
+        S3Key: artifacts/Detect-sentiment-from-customer-reviews/comprehend.zip
+      Description: >-
+        Triggered by S3 review upload to the repo bucket and start the sentiment
+        analysis via Amazon Comprehend
+      Tags:
+        - Value: SAM
+          Key: 'lambda:createdBy'
+      MemorySize: 128
+      Environment:
+        Variables:
+          bucket: !Ref S3
+      Handler: comprehend.handler
+      Role: !GetAtt 
+        - ComprehendSentimentAnalysisRole
+        - Arn
+      Timeout: 20
+      Runtime: python3.6
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 23c4e59c-ddaa-4b4f-ae0f-b3c1353d9129
+  ReplyLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: coderepository-sksjdlskajalsdkfjsdlfkjasdf
+        S3Key: function.zip
+      Description: Replies to bucket deposits of code
+      MemorySize: 128
+      Environment:
+        Variables:
+          bucket: !Ref S3
+      Handler: ReplyLambda.lambda_handler
+      Role: !GetAtt 
+        - ComprehendSentimentAnalysisRole
+        - Arn
+      Timeout: 20
+      Runtime: python3.6
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: aa013e2c-c228-4e44-a7ac-f70897b995b2
+  ComprehendSentimentAnalysisRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: ComprehendSentimentAnalysisRolePolicy0
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 'comprehend:*'
+                Resource: '*'
+                Effect: Allow
+                Sid: comprehend
+              - Action:
+                  - 's3:*'
+                Resource: !Sub 'arn:aws:s3:::${S3}/*'
+                Effect: Allow
+                Sid: s3
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 40065fcf-ae05-40de-86e9-1aa6798f23a3
+  EC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: 'myEC2InstanceProfile'
+      Roles:
+        - !Ref ComprehendSentimentAnalysisRole
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 33500b39-c3d3-43c8-a698-35ba5e9de5f9
+  LaunchTemplate:
+    Type: "AWS::EC2::LaunchTemplate"
+    Properties:
+      LaunchTemplateName: 'mylaunchtemplate'
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt 
+            - EC2InstanceProfile
+            - Arn
+        ImageId: "ami-03ca2cf31ab3adfa8"
+        InstanceType: "t2.micro"
+        KeyName: "TestKeyPair"
+        SecurityGroups:
+          - 'PublicSG'
+  AutoScalingGroup:
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    DependsOn: "LaunchTemplate"
+    Properties:
+      MinSize: "1"
+      MaxSize: "3"
+      DesiredCapacity: "1"
+      LaunchTemplate:
+        LaunchTemplateId:
+          Ref: "LaunchTemplate"
+        Version:
+          Fn::GetAtt:
+            [ "LaunchTemplate", "LatestVersionNumber" ]
+      AvailabilityZones: !GetAZs ''
+Outputs:
+  Region:
+    Value: !Ref 'AWS::Region'
+  S3ReviewSentimentBucket:
+    Value: !Ref S3
+Metadata:
+  'AWS::CloudFormation::Designer':
+    40065fcf-ae05-40de-86e9-1aa6798f23a3:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 60
+        'y': 90
+      z: 1
+      embeds: []
+    33500b39-c3d3-43c8-a698-35ba5e9de5f9:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 180
+        'y': 90
+      z: 1
+      embeds: []
+      isassociatedwith:
+        - 40065fcf-ae05-40de-86e9-1aa6798f23a3
+    114d54e4-f941-4607-8c5a-a65fdb9ed4af:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 60
+        'y': 210
+      z: 1
+      embeds: []
+    23c4e59c-ddaa-4b4f-ae0f-b3c1353d9129:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 180
+        'y': 210
+      z: 1
+      embeds: []
+    53fa9ab1-e153-4b9b-8d6e-9226bb74a30d:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 300
+        'y': 90
+      z: 1
+      embeds: []
+    8c9b34ad-da0d-424f-94f3-8435f9bb392f:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 300
+        'y': 210
+      z: 1
+      embeds: []
+    a504d633-3c7d-4039-9ac2-1a4b5c857664:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 60
+        'y': 330
+      z: 1
+      embeds: []
+    e8507f12-438d-43f2-8944-58e250cea414:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -70
+        'y': 90
+      z: 1
+      embeds: []
+    aa013e2c-c228-4e44-a7ac-f70897b995b2:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -70
+        'y': 210
+      z: 1
+      embeds: []
